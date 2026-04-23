@@ -5,17 +5,17 @@ on:
     branches:
       - main
       - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: write
 
 jobs:
-  build:
-    uses: USTBitesHub/ustbite-workflows/.github/workflows/generate-tag-and-build-image-trivy.yaml@main
-    with:
-      service_name: "ai-agent-service"
-      service_path: "./"
-    secrets: inherit
-
   scan:
-    needs: build
+    if: github.event_name == 'pull_request'
     uses: USTBitesHub/ustbite-workflows/.github/workflows/sonar-and-snyk.yaml@main
     with:
       service_name: "ai-agent-service"
@@ -23,8 +23,18 @@ jobs:
       runtime: "python"
     secrets: inherit
 
+  build:
+    needs: scan
+    if: github.event_name == 'push' || needs.scan.result == 'success'
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/generate-tag-and-build-image-trivy.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      service_path: "./"
+    secrets: inherit
+
   push-image:
-    needs: [build, scan]
+    needs: build
+    if: github.event_name == 'push' && needs.build.result == 'success'
     uses: USTBitesHub/ustbite-workflows/.github/workflows/push.yaml@main
     with:
       service_name: "ai-agent-service"
@@ -34,7 +44,7 @@ jobs:
 
   prod-gate:
     needs: push-image
-    if: github.ref_name == 'main'
+    if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     environment: production
     steps:
@@ -42,7 +52,7 @@ jobs:
 
   helm-update:
     needs: [push-image, prod-gate]
-    if: always() && needs.push-image.result == 'success' && (github.ref_name != 'main' || needs.prod-gate.result == 'success')
+    if: github.event_name == 'push' && needs.push-image.result == 'success' && (github.ref_name != 'main' || needs.prod-gate.result == 'success')
     uses: USTBitesHub/ustbite-workflows/.github/workflows/helm-updater-job.yaml@main
     with:
       service_name: "ai-agent-service"
@@ -52,13 +62,15 @@ jobs:
     secrets: inherit
 
   notify-status:
-    if: always()
-    needs: [build, scan, push-image, helm-update]
+    if: always() && github.event_name == 'push'
+    needs: [scan, build, push-image, prod-gate, helm-update]
     uses: USTBitesHub/ustbite-workflows/.github/workflows/notify.yaml@main
     with:
       service_name: "ai-agent-service"
       git_tag: ${{ needs.push-image.outputs.tag || 'N/A' }}
-      build_result: ${{ needs.build.result }}
-      sonarqube_result: ${{ needs.scan.result }}
-      push_result: ${{ needs.push-image.result }}
+      sonarqube_result: ${{ needs.scan.outputs.sonarqube_result || 'skipped' }}
+      snyk_result: ${{ needs.scan.outputs.snyk_result || 'skipped' }}
+      build_result: ${{ needs.build.outputs.build_result || 'skipped' }}
+      trivy_result: ${{ needs.build.outputs.trivy_result || 'skipped' }}
+      push_result: ${{ needs.push-image.result || 'skipped' }}
     secrets: inherit
