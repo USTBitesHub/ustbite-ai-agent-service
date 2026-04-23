@@ -1,0 +1,64 @@
+name: CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  build:
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/generate-tag-and-build-image-trivy.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      service_path: "./"
+    secrets: inherit
+
+  scan:
+    needs: build
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/sonar-and-snyk.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      service_path: "./"
+      runtime: "python"
+    secrets: inherit
+
+  push-image:
+    needs: [build, scan]
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/push.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      git_tag: ${{ needs.build.outputs.tag }}
+      tag_exists: ${{ needs.build.outputs.tag_exists }}
+    secrets: inherit
+
+  prod-gate:
+    needs: push-image
+    if: github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - run: echo "Approved for production deployment"
+
+  helm-update:
+    needs: [push-image, prod-gate]
+    if: always() && needs.push-image.result == 'success' && (github.ref_name != 'main' || needs.prod-gate.result == 'success')
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/helm-updater-job.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      image_tag: ${{ needs.push-image.outputs.tag }}
+      helm_values_path: "charts/ai-agent-service/values.yaml"
+      target_branch: ${{ github.ref_name }}
+    secrets: inherit
+
+  notify-status:
+    if: always()
+    needs: [build, scan, push-image, helm-update]
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/notify.yaml@main
+    with:
+      service_name: "ai-agent-service"
+      git_tag: ${{ needs.push-image.outputs.tag || 'N/A' }}
+      build_result: ${{ needs.build.result }}
+      sonarqube_result: ${{ needs.scan.result }}
+      push_result: ${{ needs.push-image.result }}
+    secrets: inherit
