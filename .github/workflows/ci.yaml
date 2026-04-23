@@ -65,7 +65,6 @@ jobs:
     with:
       service_name: "ai-agent-service"
       image_tag: ${{ needs.push-image.outputs.tag }}
-      helm_values_path: "charts/ai-agent-service/values.yaml"
       target_branch: ${{ github.ref_name }}
     secrets: inherit
 
