@@ -25,7 +25,7 @@ jobs:
 
   build:
     needs: scan
-    if: github.event_name == 'push' || needs.scan.result == 'success'
+    if: always() && (github.event_name == 'push' || needs.scan.result == 'success')
     uses: USTBitesHub/ustbite-workflows/.github/workflows/generate-tag-and-build-image-trivy.yaml@main
     with:
       service_name: "ai-agent-service"
