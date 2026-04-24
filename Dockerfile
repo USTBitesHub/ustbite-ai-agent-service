@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpq5 && rm -r
     && addgroup --gid 1001 appgroup \
     && adduser --uid 1001 --ingroup appgroup --no-create-home --disabled-password appuser
 COPY --from=builder /install /usr/local
+COPY --chown=0:0 --chmod=0555 ./alembic ./alembic
+COPY --chown=0:0 --chmod=0444 ./alembic.ini ./alembic.ini
 COPY --chown=appuser:appgroup ./app ./app
 USER appuser
 EXPOSE 8009
