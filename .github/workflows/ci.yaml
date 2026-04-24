@@ -60,7 +60,7 @@ jobs:
 
   helm-update:
     needs: [push-image, prod-gate]
-    if: github.event_name == 'push' && needs.push-image.result == 'success' && (github.ref_name != 'main' || needs.prod-gate.result == 'success')
+    if: always() && github.event_name == 'push' && needs.push-image.result == 'success' && (needs.prod-gate.result == 'success' || needs.prod-gate.result == 'skipped')
     uses: USTBitesHub/ustbite-workflows/.github/workflows/helm-updater-job.yaml@main
     with:
       service_name: "ai-agent-service"
