@@ -28,7 +28,11 @@ def do_run_migrations(connection) -> None:
 
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.database_url
+    # Disable SSL for asyncpg — postgres 16 with self-signed certs causes TLS handshake timeout
+    db_url = settings.database_url
+    if "ssl" not in db_url:
+        db_url = db_url + ("&" if "?" in db_url else "?") + "ssl=disable"
+    configuration["sqlalchemy.url"] = db_url
     connectable = async_engine_from_config(configuration, prefix="sqlalchemy.", poolclass=pool.NullPool)
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
