@@ -42,7 +42,7 @@ jobs:
 
   push-image:
     needs: build-push
-    if: github.event_name == 'push' && needs.build-push.result == 'success'
+    if: github.event_name == 'push' && needs.build-push.result == 'success' && needs.build-push.outputs.build_result == 'success'
     uses: USTBitesHub/ustbite-workflows/.github/workflows/push.yaml@main
     with:
       service_name: "ai-agent-service"
