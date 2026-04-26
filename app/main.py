@@ -1,6 +1,7 @@
+import asyncio
 import logging
 import ollama
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.models import ChatRequest, ChatResponse, HealthResponse
@@ -19,11 +20,17 @@ app.add_middleware(
 )
 
 
+_llm_semaphore = asyncio.Semaphore(1)
+
+
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: Request, body: ChatRequest):
-    auth_header = request.headers.get("Authorization", "")
-    logger.info("Chat request | session=%s | message=%s", body.session_id, body.message)
-    return await run_agent(body.message, body.session_id, auth_header)
+    if _llm_semaphore.locked():
+        raise HTTPException(status_code=429, detail="AI is busy processing another request. Please wait a moment and try again.")
+    async with _llm_semaphore:
+        auth_header = request.headers.get("Authorization", "")
+        logger.info("Chat request | session=%s | message=%s", body.session_id, body.message)
+        return await run_agent(body.message, body.session_id, auth_header)
 
 
 _ollama_status: dict = {"status": "unknown", "checked_at": 0.0}
