@@ -26,14 +26,22 @@ async def chat(request: Request, body: ChatRequest):
     return await run_agent(body.message, body.session_id, auth_header)
 
 
+_ollama_status: dict = {"status": "unknown", "checked_at": 0.0}
+_OLLAMA_CHECK_INTERVAL = 60.0
+
+
 @app.get("/health", response_model=HealthResponse)
 async def health():
-    try:
-        client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
-        await client.list()
-        ollama_status = "reachable"
-    except Exception as e:
-        logger.warning("Ollama unreachable: %s", e)
-        ollama_status = f"unreachable: {e}"
+    import time
+    now = time.monotonic()
+    if now - _ollama_status["checked_at"] > _OLLAMA_CHECK_INTERVAL:
+        try:
+            client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
+            await client.list()
+            _ollama_status["status"] = "reachable"
+        except Exception as e:
+            logger.warning("Ollama unreachable: %s", e)
+            _ollama_status["status"] = f"unreachable: {e}"
+        _ollama_status["checked_at"] = now
 
-    return HealthResponse(status="ok", ollama=ollama_status)
+    return HealthResponse(status="ok", ollama=_ollama_status["status"])
