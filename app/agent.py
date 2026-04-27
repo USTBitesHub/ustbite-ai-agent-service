@@ -1,6 +1,8 @@
 import json
 import logging
+import re
 import ollama
+from typing import Any
 from app.config import settings
 from app.models import ChatResponse, ToolCallInfo
 from app.tools import TOOLS, execute_tool
@@ -20,13 +22,101 @@ Tool usage rules:
 - Confirm actions after tool calls in a friendly tone
 - Keep responses concise
 - If a tool fails, tell the user politely
+
+If the user asks to add items to the cart:
+- Always call search_menu after you have a restaurant_id
+- Then always call add_to_cart for the best matching item from search_menu
+- If no matching items are found, ask a short clarification question
 """
 
 MAX_ITERATIONS = 5
 
 
+def _is_add_to_cart_intent(message: str) -> bool:
+    text = message.lower()
+    return "add to cart" in text or ("add" in text and "cart" in text)
+
+
+def _extract_quantity(message: str) -> int:
+    match = re.search(r"\b(\d+)\b", message)
+    if match:
+        return max(1, int(match.group(1)))
+
+    word_map = {
+        "one": 1,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "six": 6,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
+    }
+    for word, value in word_map.items():
+        if re.search(rf"\b{word}\b", message.lower()):
+            return value
+
+    return 1
+
+
+def _tokenize(text: str) -> list[str]:
+    return [t for t in re.split(r"[^a-z0-9]+", text.lower()) if t]
+
+
+def _extract_menu_items(result: Any) -> list[dict[str, Any]]:
+    if isinstance(result, dict) and isinstance(result.get("data"), list):
+        return result["data"]
+    if isinstance(result, list):
+        return result
+    return []
+
+
+def _coerce_price(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _select_menu_item(items: list[dict[str, Any]], query: str) -> dict[str, Any] | None:
+    if not items:
+        return None
+
+    query_text = query.lower().strip()
+    query_tokens = _tokenize(query_text)
+    best_item: dict[str, Any] | None = None
+    best_score = -1
+
+    for item in items:
+        name = str(item.get("name", "")).lower()
+        if not name:
+            continue
+
+        score = 0
+        if query_text and query_text in name:
+            score += 5
+        for token in query_tokens:
+            if token in name:
+                score += 1
+        if not query_tokens:
+            score += 1
+        if item.get("is_available") is False:
+            score -= 100
+
+        if score > best_score:
+            best_score = score
+            best_item = item
+
+    return best_item
+
+
 async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResponse:
     client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
+    add_intent = _is_add_to_cart_intent(message)
+    requested_qty = _extract_quantity(message)
+    auto_add_done = False
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -72,6 +162,51 @@ async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResp
                 "role": "tool",
                 "content": json.dumps(result),
             })
+
+            if fn_name == "search_menu" and add_intent and not auto_add_done:
+                if any(tc.tool == "add_to_cart" for tc in tool_calls_made):
+                    continue
+
+                menu_items = _extract_menu_items(result)
+                if not menu_items:
+                    return ChatResponse(
+                        response="I couldn't find a matching menu item. Which item should I add?",
+                        tool_calls_made=tool_calls_made,
+                    )
+
+                query = str(fn_args.get("query", ""))
+                chosen = _select_menu_item(menu_items, query)
+                if not chosen:
+                    return ChatResponse(
+                        response="I couldn't find a matching menu item. Which item should I add?",
+                        tool_calls_made=tool_calls_made,
+                    )
+
+                add_args = {
+                    "item_id": str(chosen.get("id", "")),
+                    "item_name": str(chosen.get("name", "")),
+                    "qty": requested_qty,
+                    "price": _coerce_price(chosen.get("price")),
+                }
+
+                add_result = await execute_tool("add_to_cart", add_args, auth_header)
+                tool_calls_made.append(ToolCallInfo(tool="add_to_cart", args=add_args, result=add_result))
+                messages.append({
+                    "role": "tool",
+                    "content": json.dumps(add_result),
+                })
+                auto_add_done = True
+
+                if isinstance(add_result, dict) and add_result.get("error"):
+                    return ChatResponse(
+                        response="Sorry, I couldn't add that item to your cart.",
+                        tool_calls_made=tool_calls_made,
+                    )
+
+                return ChatResponse(
+                    response=f"Added {requested_qty} x {add_args['item_name']} to your cart.",
+                    tool_calls_made=tool_calls_made,
+                )
 
     logger.warning("Agent hit max_iterations=%d for session %s", MAX_ITERATIONS, session_id)
     return ChatResponse(
