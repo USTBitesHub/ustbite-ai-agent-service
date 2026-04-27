@@ -30,7 +30,8 @@ async def chat(request: Request, body: ChatRequest):
     async with _llm_semaphore:
         auth_header = request.headers.get("Authorization", "")
         logger.info("Chat request | session=%s | message=%s", body.session_id, body.message)
-        return await run_agent(body.message, body.session_id, auth_header)
+        history = [h.model_dump() for h in body.history]
+        return await run_agent(body.message, body.session_id, auth_header, history)
 
 
 _ollama_status: dict = {"status": "unknown", "checked_at": 0.0}

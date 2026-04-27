@@ -120,17 +120,17 @@ def _select_menu_item(items: list[dict[str, Any]], query: str) -> dict[str, Any]
     return best_item
 
 
-async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResponse:
+async def run_agent(message: str, session_id: str, auth_header: str, history: list[dict] | None = None) -> ChatResponse:
     client = ollama.AsyncClient(host=settings.OLLAMA_HOST)
     add_intent = _is_add_to_cart_intent(message)
     requested_qty = _extract_quantity(message)
     auto_add_done = False
     restaurant_name_by_id: dict[str, str] = {}
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": message},
-    ]
+    messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for h in (history or []):
+        messages.append({"role": h["role"], "content": h["content"]})
+    messages.append({"role": "user", "content": message})
 
     tool_calls_made: list[ToolCallInfo] = []
 

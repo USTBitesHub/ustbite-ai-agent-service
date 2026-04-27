@@ -2,9 +2,15 @@ from pydantic import BaseModel
 from typing import Any
 
 
+class HistoryMessage(BaseModel):
+    role: str  # "user" or "assistant"
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default"
+    history: list[HistoryMessage] = []
 
 
 class ToolCallInfo(BaseModel):
