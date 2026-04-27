@@ -47,6 +47,12 @@ TOOLS = [
                     "item_name": {"type": "string", "description": "The name of the item"},
                     "qty": {"type": "integer", "description": "Quantity to add"},
                     "price": {"type": "number", "description": "Price per unit in INR"},
+                    "restaurant_id": {"type": "string", "description": "Restaurant ID for the item"},
+                    "restaurant_name": {"type": "string", "description": "Restaurant name"},
+                    "description": {"type": "string", "description": "Item description"},
+                    "image_url": {"type": "string", "description": "Item image URL"},
+                    "is_vegetarian": {"type": "boolean", "description": "Whether the item is vegetarian"},
+                    "category_name": {"type": "string", "description": "Menu category name"},
                 },
                 "required": ["item_id", "item_name", "qty", "price"],
             },
@@ -99,6 +105,42 @@ TOOLS = [
 ]
 
 
+def _build_cart_payload(args: dict) -> dict | None:
+    if "menuItem" in args:
+        return {
+            "menuItem": args["menuItem"],
+            "restaurantName": args.get("restaurantName", "Unknown Restaurant"),
+            "qty": int(args.get("qty", 1)),
+        }
+
+    if "menu_item" in args:
+        return {
+            "menuItem": args["menu_item"],
+            "restaurantName": args.get("restaurant_name", "Unknown Restaurant"),
+            "qty": int(args.get("qty", 1)),
+        }
+
+    menu_item = {
+        "id": args.get("item_id", ""),
+        "restaurantId": args.get("restaurant_id", ""),
+        "name": args.get("item_name", ""),
+        "description": args.get("description", "") or "",
+        "price": float(args.get("price", 0)),
+        "image": args.get("image_url", "") or "",
+        "veg": bool(args.get("is_vegetarian", True)),
+        "category": args.get("category_name", "Mains") or "Mains",
+    }
+
+    if not menu_item["id"] or not menu_item["restaurantId"]:
+        return None
+
+    return {
+        "menuItem": menu_item,
+        "restaurantName": args.get("restaurant_name", "Unknown Restaurant"),
+        "qty": int(args.get("qty", 1)),
+    }
+
+
 async def execute_tool(name: str, args: dict, auth_header: str) -> dict:
     logger.info("Executing tool: %s | args: %s", name, args)
     headers = {}
@@ -126,14 +168,13 @@ async def execute_tool(name: str, args: dict, auth_header: str) -> dict:
                 return r.json()
 
             elif name == "add_to_cart":
+                payload = _build_cart_payload(args)
+                if payload is None:
+                    return {"error": "Missing menu item data for cart request"}
+
                 r = await client.post(
                     f"{settings.CART_SERVICE_URL}/cart/items",
-                    json={
-                        "item_id": args["item_id"],
-                        "item_name": args["item_name"],
-                        "qty": args["qty"],
-                        "price": args["price"],
-                    },
+                    json=payload,
                     headers=headers,
                 )
                 r.raise_for_status()

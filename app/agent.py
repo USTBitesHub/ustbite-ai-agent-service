@@ -73,6 +73,14 @@ def _extract_menu_items(result: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _extract_restaurants(result: Any) -> list[dict[str, Any]]:
+    if isinstance(result, dict) and isinstance(result.get("data"), list):
+        return result["data"]
+    if isinstance(result, list):
+        return result
+    return []
+
+
 def _coerce_price(value: Any) -> float:
     try:
         return float(value)
@@ -117,6 +125,7 @@ async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResp
     add_intent = _is_add_to_cart_intent(message)
     requested_qty = _extract_quantity(message)
     auto_add_done = False
+    restaurant_name_by_id: dict[str, str] = {}
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -163,6 +172,12 @@ async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResp
                 "content": json.dumps(result),
             })
 
+            if fn_name == "search_restaurants":
+                for item in _extract_restaurants(result):
+                    rest_id = str(item.get("id", ""))
+                    if rest_id:
+                        restaurant_name_by_id[rest_id] = str(item.get("name", ""))
+
             if fn_name == "search_menu" and add_intent and not auto_add_done:
                 if any(tc.tool == "add_to_cart" for tc in tool_calls_made):
                     continue
@@ -182,11 +197,20 @@ async def run_agent(message: str, session_id: str, auth_header: str) -> ChatResp
                         tool_calls_made=tool_calls_made,
                     )
 
+                restaurant_id = str(chosen.get("restaurant_id", ""))
+                restaurant_name = restaurant_name_by_id.get(restaurant_id, "Unknown Restaurant")
+
                 add_args = {
                     "item_id": str(chosen.get("id", "")),
                     "item_name": str(chosen.get("name", "")),
                     "qty": requested_qty,
                     "price": _coerce_price(chosen.get("price")),
+                    "restaurant_id": restaurant_id,
+                    "restaurant_name": restaurant_name,
+                    "description": chosen.get("description") or "",
+                    "image_url": chosen.get("image_url") or "",
+                    "is_vegetarian": chosen.get("is_vegetarian", True),
+                    "category_name": chosen.get("category_name") or "Mains",
                 }
 
                 add_result = await execute_tool("add_to_cart", add_args, auth_header)
