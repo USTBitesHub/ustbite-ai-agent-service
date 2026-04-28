@@ -13,9 +13,20 @@ on:
 permissions:
   contents: write
   packages: write
+  id-token: write
 
 jobs:
+
+  gitleaks:
+    if: github.event_name == 'pull_request'
+    uses: USTBitesHub/ustbite-workflows/.github/workflows/gitleaks.yaml@feature/lint-scan
+    with:
+      service_name: "ai-agent-service"
+    secrets: inherit
+
+  
   scan:
+    needs: gitleaks
     if: github.event_name == 'pull_request'
     uses: USTBitesHub/ustbite-workflows/.github/workflows/sonar-and-snyk.yaml@main
     with:
