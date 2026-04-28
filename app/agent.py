@@ -37,6 +37,18 @@ def _is_add_to_cart_intent(message: str) -> bool:
     return "add to cart" in text or ("add" in text and "cart" in text)
 
 
+def _extract_item_query(message: str) -> str:
+    """Extract food item name from add-to-cart message."""
+    text = message.lower()
+    text = re.sub(r'^\s*(?:add|order|get|want|give me|i want|please add|can you add)\s+', '', text)
+    text = re.sub(r'\s+to\s+(?:my\s+)?cart\s*$', '', text)
+    text = re.sub(r'\b\d+\b\s*', '', text)
+    text = re.sub(r'\b(?:one|two|three|four|five|six|seven|eight|nine|ten)\b\s*', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\bfrom\s+\w+(?:\s+\w+)*', '', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text or message
+
+
 def _extract_quantity(message: str) -> int:
     match = re.search(r"\b(\d+)\b", message)
     if match:
@@ -177,6 +189,46 @@ async def run_agent(message: str, session_id: str, auth_header: str, history: li
                     rest_id = str(item.get("id", ""))
                     if rest_id:
                         restaurant_name_by_id[rest_id] = str(item.get("name", ""))
+
+                if add_intent and not auto_add_done:
+                    item_query = _extract_item_query(message)
+                    for restaurant in _extract_restaurants(result):
+                        rid = str(restaurant.get("id", ""))
+                        if not rid:
+                            continue
+                        search_args = {"restaurant_id": rid, "query": item_query}
+                        search_result = await execute_tool("search_menu", search_args, auth_header)
+                        tool_calls_made.append(ToolCallInfo(tool="search_menu", args=search_args, result=search_result))
+                        menu_items = _extract_menu_items(search_result)
+                        chosen = _select_menu_item(menu_items, item_query)
+                        if not chosen:
+                            continue
+                        chosen_rid = str(chosen.get("restaurant_id", "")) or rid
+                        add_args = {
+                            "item_id": str(chosen.get("id", "")),
+                            "item_name": str(chosen.get("name", "")),
+                            "qty": requested_qty,
+                            "price": _coerce_price(chosen.get("price")),
+                            "restaurant_id": chosen_rid,
+                            "restaurant_name": restaurant_name_by_id.get(chosen_rid, restaurant_name_by_id.get(rid, "Unknown")),
+                            "description": chosen.get("description") or "",
+                            "image_url": chosen.get("image_url") or "",
+                            "is_vegetarian": chosen.get("is_vegetarian", True),
+                            "category_name": chosen.get("category_name") or "Mains",
+                        }
+                        add_result = await execute_tool("add_to_cart", add_args, auth_header)
+                        tool_calls_made.append(ToolCallInfo(tool="add_to_cart", args=add_args, result=add_result))
+                        auto_add_done = True
+                        if isinstance(add_result, dict) and add_result.get("error"):
+                            return ChatResponse(response="Sorry, I couldn't add that item to your cart.", tool_calls_made=tool_calls_made)
+                        return ChatResponse(
+                            response=f"Added {requested_qty} × {add_args['item_name']} from {add_args['restaurant_name']} to your cart! 🛒",
+                            tool_calls_made=tool_calls_made,
+                        )
+                    return ChatResponse(
+                        response=f"I couldn't find '{item_query}' at any matching restaurant. Could you be more specific?",
+                        tool_calls_made=tool_calls_made,
+                    )
 
             if fn_name == "search_menu" and add_intent and not auto_add_done:
                 if any(tc.tool == "add_to_cart" for tc in tool_calls_made):

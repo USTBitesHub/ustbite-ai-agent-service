@@ -16,7 +16,7 @@ TOOLS = [
                     "cuisine": {"type": "string", "description": "Type of cuisine e.g. South Indian, North Indian, Café"},
                     "max_price": {"type": "integer", "description": "Maximum price per item in INR"},
                 },
-                "required": ["cuisine", "max_price"],
+                "required": ["cuisine"],
             },
         },
     },
